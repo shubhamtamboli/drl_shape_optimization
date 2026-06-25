@@ -17,14 +17,49 @@ clipping_ratio          = 0.2
 entropy                 = 0.01
 model_dir               = '.'
 
+
+def write_tandem_cylinder_reset(reset_dir, tandem_distance, radius=1.0, n_sampling_pts=10):
+    if (tandem_distance <= 2.0*radius):
+        print('Error : tandem_distance must be larger than two cylinder radii')
+        exit()
+
+    if (not os.path.exists(reset_dir)):
+        os.makedirs(reset_dir)
+
+    centers = [(-0.5*tandem_distance, 0.0),
+               ( 0.5*tandem_distance, 0.0)]
+
+    for body_id, center in enumerate(centers):
+        cx, cy = center
+        control_pts = [(cx+radius, cy),
+                       (cx,        cy+radius),
+                       (cx-radius, cy),
+                       (cx,        cy-radius)]
+        filename = reset_dir+'/body'+str(body_id)+'.csv'
+
+        with open(filename, 'w') as file:
+            file.write('4 {}\n'.format(n_sampling_pts))
+            for i in range(0,4):
+                file.write('0.5\n')
+            for i in range(0,4):
+                file.write('0.5\n')
+            for pt in control_pts:
+                file.write('{} {}\n'.format(pt[0], pt[1]))
 # Define environment
 def resume_env():
     # Environment parameters
-    reset_dir               = 'reset/4'
-    nb_pts_to_move          = 4
-    pts_to_move             = [0,1,2,3]
+    reset_dir               = 'reset/tandem_2cyl'
+    geometry_mode           = 'tandem'
+    nb_bodies               = 2
+    nb_pts_to_move_per_body = 4
+    pts_to_move_per_body    = [[0, 1, 2, 3],
+                               [0, 1, 2, 3]]
+    tandem_distance         = 4.0
+    write_tandem_cylinder_reset(reset_dir, tandem_distance)
+    nb_pts_to_move          = nb_bodies * nb_pts_to_move_per_body
+    pts_to_move             = pts_to_move_per_body
     nb_ctrls_per_episode    = 50
-    nb_episodes             = 50000
+    nb_episodes             = 10000
     max_deformation         = 3.0
     restart_from_cylinder   = True
     replace_shape           = True

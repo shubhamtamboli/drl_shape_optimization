@@ -417,6 +417,272 @@ class Shape:
 ### ************************************************
 
 ### ************************************************
+### Class defining a multi-body shape system
+class ShapeSystem:
+    ### ************************************************
+    ### Constructor
+    def __init__(self, name='shape', bodies=None):
+        if (bodies is None): bodies = []
+
+        self.name      = name
+        self.bodies    = bodies
+        self.n_bodies  = len(bodies)
+        self.index     = 0
+
+    ### ************************************************
+    ### Reset object
+    def reset(self):
+        self.bodies   = []
+        self.n_bodies = 0
+        self.index    = 0
+
+    ### ************************************************
+    ### Read one body csv without relying on file-name conventions
+    def _read_body_csv(self, filename, body_id):
+        if (not os.path.isfile(filename)):
+            print('I could not find csv file: '+filename)
+            print('Exiting now')
+            exit()
+
+        x      = []
+        y      = []
+        radius = []
+        edgy   = []
+
+        with open(filename) as file:
+            header         = file.readline().split()
+            n_control_pts  = int(header[0])
+            n_sampling_pts = int(header[1])
+
+            for i in range(0,n_control_pts):
+                rad = file.readline().split()
+                radius.append(float(rad[0]))
+
+            for i in range(0,n_control_pts):
+                edg = file.readline().split()
+                edgy.append(float(edg[0]))
+
+            for i in range(0,n_control_pts):
+                coords = file.readline().split()
+                x.append(float(coords[0]))
+                y.append(float(coords[1]))
+
+        control_pts = np.column_stack((x,y))
+        body        = Shape('body'+str(body_id),
+                            control_pts,
+                            n_control_pts,
+                            n_sampling_pts,
+                            radius,
+                            edgy)
+        body.index  = self.index
+
+        return body
+
+    ### ************************************************
+    ### Read all body csv files from reset folder
+    def read_csv(self, reset_dir, *args, **kwargs):
+        keep_numbering = kwargs.get('keep_numbering', False)
+
+        old_index = self.index
+        body_files = []
+        body_id    = 0
+        while True:
+            filename = reset_dir+'/body'+str(body_id)+'.csv'
+            if (not os.path.isfile(filename)):
+                break
+            body_files.append(filename)
+            body_id += 1
+
+        if (len(body_files) == 0):
+            filename = reset_dir+'/shape_0.csv'
+            if (os.path.isfile(filename)):
+                body_files.append(filename)
+
+        if (len(body_files) == 0):
+            print('I could not find body csv files in: '+reset_dir)
+            print('Expected body0.csv, body1.csv, ...')
+            print('Exiting now')
+            exit()
+
+        self.reset()
+        if (keep_numbering):
+            self.index = old_index
+
+        for body_id, filename in enumerate(body_files):
+            body = self._read_body_csv(filename, body_id)
+            body.index = self.index
+            self.bodies.append(body)
+
+        self.n_bodies = len(self.bodies)
+
+    ### ************************************************
+    ### Generate every body independently
+    def generate(self, *args, **kwargs):
+        centering = kwargs.get('centering', False)
+        for body in self.bodies:
+            body.generate(centering=centering)
+
+    ### ************************************************
+    ### Write body csv files
+    def write_csv(self):
+        for body_id, body in enumerate(self.bodies):
+            filename = self.name+'_'+str(self.index)+'_body'+str(body_id)+'.csv'
+            with open(filename,'w') as file:
+                file.write('{} {}\n'.format(body.n_control_pts,
+                                            body.n_sampling_pts))
+                for i in range(0,body.n_control_pts):
+                    file.write('{}\n'.format(body.radius[i]))
+                for i in range(0,body.n_control_pts):
+                    file.write('{}\n'.format(body.edgy[i]))
+                for i in range(0,body.n_control_pts):
+                    file.write('{} {}\n'.format(body.control_pts[i,0],
+                                                body.control_pts[i,1]))
+
+    ### ************************************************
+    ### Write a combined image
+    def generate_image(self, *args, **kwargs):
+        plot_pts       = kwargs.get('plot_pts',       False)
+        override_name  = kwargs.get('override_name',  '')
+        quad_radius    = kwargs.get('quad_radius',    1.0)
+        xmin           = kwargs.get('xmin',          -5.0)
+        xmax           = kwargs.get('xmax',          10.0)
+        ymin           = kwargs.get('ymin',          -5.0)
+        ymax           = kwargs.get('ymax',           5.0)
+
+        plt.xlim([xmin,xmax])
+        plt.ylim([ymin,ymax])
+        plt.axis('off')
+        plt.gca().set_aspect('equal', adjustable='box')
+
+        for body_id, body in enumerate(self.bodies):
+            plt.fill(body.curve_pts[:,0],
+                     body.curve_pts[:,1],
+                     'black',
+                     linewidth=2.5)
+
+            if (plot_pts):
+                colors = matplotlib.cm.ocean(np.linspace(0,1,body.n_control_pts))
+                plt.scatter(body.control_pts[:,0],
+                            body.control_pts[:,1],
+                            color=colors)
+
+        filename = self.name+'_'+str(self.index)+'.png'
+        if (override_name != ''): filename = override_name
+
+        plt.savefig(filename,
+                    dpi=200,
+                    bbox_inches='tight',
+                    pad_inches=0,
+                    facecolor=(0.784,0.773,0.741))
+        plt.clf()
+
+    ### ************************************************
+    ### Mesh domain with each body as an independent hole
+    def mesh(self, *args, **kwargs):
+        mesh_domain = kwargs.get('mesh_domain', False)
+        xmin        = kwargs.get('xmin',       -5.0)
+        xmax        = kwargs.get('xmax',        10.0)
+        ymin        = kwargs.get('ymin',       -5.0)
+        ymax        = kwargs.get('ymax',        5.0)
+        shape_h     = kwargs.get('shape_h',     10.0)
+        domain_h    = kwargs.get('domain_h',    20.0)
+        mesh_format = kwargs.get('mesh_format', 'mesh')
+
+        mesh_size = 1.0
+        geom      = pygmsh.built_in.Geometry()
+        polys     = []
+
+        for body in self.bodies:
+            poly = geom.add_polygon(body.curve_pts,
+                                    mesh_size*shape_h,
+                                    make_surface=not mesh_domain)
+            polys.append(poly)
+
+        if (mesh_domain):
+            holes = [poly.line_loop for poly in polys]
+            border = geom.add_rectangle(xmin, xmax,
+                                        ymin, ymax,
+                                        0.0,
+                                        mesh_size*domain_h,
+                                        holes=holes)
+
+        try:
+            mesh = pygmsh.generate_mesh(geom,
+                                        extra_gmsh_arguments=["-v", "0"])
+        except AssertionError:
+            print('Meshing failed')
+            return False, 0
+        else:
+            n_tri = len(mesh.cells['triangle'])
+
+            if ('vertex' in mesh.cells): del mesh.cells['vertex']
+            if ((mesh_format == 'xml') and ('line' in mesh.cells)): del mesh.cells['line']
+
+            filename = self.name+'_'+str(self.index)+'.'+mesh_format
+            meshio.write_points_cells(filename, mesh.points, mesh.cells)
+
+            return True, n_tri
+
+    ### ************************************************
+    ### Modify selected points on every body
+    def modify_shape_from_field(self, deformation, *args, **kwargs):
+        replace  = kwargs.get('replace',  False)
+        pts_list = kwargs.get('pts_list', [])
+
+        if (len(pts_list) != self.n_bodies):
+            print('pts_list must contain one point list per body')
+            quit()
+        if (len(deformation) != self.n_bodies):
+            print('deformation must contain one deformation array per body')
+            quit()
+
+        for body_id, body in enumerate(self.bodies):
+            body.modify_shape_from_field(deformation[body_id],
+                                         replace=replace,
+                                         pts_list=pts_list[body_id])
+            body.index = self.index + 1
+
+        self.index += 1
+
+    ### ************************************************
+    ### Return flattened control point coordinates and edgy values
+    def get_state(self):
+        state = np.array([])
+        for body in self.bodies:
+            for i in range(0,body.n_control_pts):
+                state = np.append(state,body.control_pts[i,0])
+                state = np.append(state,body.control_pts[i,1])
+                state = np.append(state,body.edgy[i])
+
+        return state
+
+    ### ************************************************
+    ### Return all control points as one array
+    def get_control_pts(self):
+        pts = np.empty((0,2))
+        for body in self.bodies:
+            pts = np.vstack((pts, body.control_pts))
+
+        return pts
+
+    ### ************************************************
+    ### Return one bounding box per body
+    def get_obstacle_boxes(self, margin=0.5):
+        boxes = []
+        for body in self.bodies:
+            x_min, y_min = np.amin(body.curve_pts[:,0:2],axis=0)
+            x_max, y_max = np.amax(body.curve_pts[:,0:2],axis=0)
+            boxes.append(dict(xmin=x_min-margin,
+                              xmax=x_max+margin,
+                              ymin=y_min-margin,
+                              ymax=y_max+margin))
+
+        return boxes
+
+### End of class ShapeSystem
+### ************************************************
+
+### ************************************************
 ### Compute distance between two points
 def compute_distance(p1, p2):
 

@@ -3,10 +3,8 @@ import os
 import glob
 import math
 import time
-import PIL
-import matplotlib
+import shutil
 import numpy             as np
-import matplotlib.pyplot as plt
 
 # Custom imports
 from shapes_utils  import *
@@ -20,8 +18,8 @@ class env():
     episode_nb =-1
     control_nb = 0
 
-    # Initialize empty shape
-    shape = Shape()
+    # Initialize empty shape system
+    shape = ShapeSystem()
 
     def __init__(self,
                  nb_pts_to_move, pts_to_move,
@@ -39,8 +37,9 @@ class env():
                  reset_dir,
                  xmin, xmax, ymin, ymax):
 
-        self.nb_pts_to_move          = nb_pts_to_move
-        self.pts_to_move             = pts_to_move
+        self.pts_to_move             = self.normalize_pts_to_move(pts_to_move)
+        self.nb_bodies               = len(self.pts_to_move)
+        self.nb_pts_to_move          = sum(len(pts) for pts in self.pts_to_move)
         self.nb_ctrls_per_episode    = nb_ctrls_per_episode
         self.nb_episodes             = nb_episodes
         self.max_deformation         = max_deformation
@@ -69,9 +68,9 @@ class env():
             print('Error : I could not find the reset folder')
             exit()
 
-        # Initialize shape by reading it from reset folder
-        # Shape reset is automatic when reading from csv
-        env.shape.read_csv(self.reset_dir+'/shape_0.csv')
+        # Initialize shape system by reading it from reset folder
+        env.shape = ShapeSystem()
+        env.shape.read_csv(self.reset_dir)
         env.shape.generate(centering=False)
 
         # Initialize arrays
@@ -93,28 +92,32 @@ class env():
 
         # Remove save folder
         if (not self.restore_model):
-            if (os.path.exists(self.comp_dir+'/save')):
-                os.system('rm -r '+self.comp_dir+'/save')
+            save_dir = self.comp_dir+'/save'
+            if (os.path.exists(save_dir)):
+                shutil.rmtree(save_dir)
 
             # Make sure the save repo exists and is properly formated
-            if (not os.path.exists(self.comp_dir+'/save')):
-                os.system('mkdir '+self.comp_dir+'/save')
-            if (not os.path.exists(self.comp_dir+'/save/png')):
-                os.system('mkdir '+self.comp_dir+'/save/png')
-            if (not os.path.exists(self.comp_dir+'/save/rejected')):
-                os.system('mkdir '+self.comp_dir+'/save/rejected')
-            if (not os.path.exists(self.comp_dir+'/save/xml')):
-                os.system('mkdir '+self.comp_dir+'/save/xml')
-            if (not os.path.exists(self.comp_dir+'/save/csv')):
-                os.system('mkdir '+self.comp_dir+'/save/csv')
-            if (not os.path.exists(self.comp_dir+'/save/sol')):
-                os.system('mkdir '+self.comp_dir+'/save/sol')
+            os.makedirs(save_dir+'/png',      exist_ok=True)
+            os.makedirs(save_dir+'/rejected', exist_ok=True)
+            os.makedirs(save_dir+'/xml',      exist_ok=True)
+            os.makedirs(save_dir+'/csv',      exist_ok=True)
+            os.makedirs(save_dir+'/sol',      exist_ok=True)
 
-            # Copy initial files in save repo if restart from cylinder
+            # Copy initial files in save repo if restart from cylinder/tandem baseline
             if (self.restart_from_cylinder):
-                os.system('cp '+self.reset_dir+'/shape_0.png '+self.comp_dir+'/save/png/.')
-                os.system('cp '+self.reset_dir+'/shape_0.xml '+self.comp_dir+'/save/xml/.')
-                os.system('cp '+self.reset_dir+'/shape_0.csv '+self.comp_dir+'/save/csv/.')
+                for filename in glob.glob(self.reset_dir+'/*.png'):
+                    shutil.copy(filename, save_dir+'/png/.')
+                for filename in glob.glob(self.reset_dir+'/*.xml'):
+                    shutil.copy(filename, save_dir+'/xml/.')
+                for filename in glob.glob(self.reset_dir+'/*.csv'):
+                    shutil.copy(filename, save_dir+'/csv/.')
+
+    def normalize_pts_to_move(self, pts_to_move):
+        if (len(pts_to_move) == 0):
+            return []
+        if isinstance(pts_to_move[0], (list, tuple, np.ndarray)):
+            return [list(pts) for pts in pts_to_move]
+        return [list(pts_to_move)]
 
     def reset(self):
         # Console output
@@ -125,9 +128,9 @@ class env():
         # Reset control number
         env.control_nb  = 0
 
-        # Reset from cylinder if asked
+        # Reset from baseline if asked
         if (self.restart_from_cylinder):
-            env.shape.read_csv(self.reset_dir+'/shape_0.csv', keep_numbering=True)
+            env.shape.read_csv(self.reset_dir, keep_numbering=True)
             env.shape.generate(centering=False)
 
         # Fill next state
@@ -139,28 +142,36 @@ class env():
         # Console output
         print('***    Starting control '+str(env.control_nb))
 
-        # Convert actions to numpy array
-        deformation = np.array(action).reshape((int(len(action)/3), 3))
+        # Convert actions to body-wise numpy arrays
+        action = np.array(action)
+        deformation = action.reshape((int(len(action)/3), 3))
+        body_deformation = []
+        action_index = 0
 
-        for i in range(self.nb_pts_to_move):
-            pt     = self.pts_to_move[i]
-            radius = max(abs(deformation[i,0]),0.2)*self.max_deformation
-            dangle = (360.0/float(env.shape.n_control_pts))
-            angle  = dangle*float(pt)+deformation[i,1]*dangle/2.0
-            x      = radius*math.cos(math.radians(angle))
-            y      = radius*math.sin(math.radians(angle))
-            edg    = 0.5+0.5*abs(deformation[i,2])
+        for body_id, pts in enumerate(self.pts_to_move):
+            body = env.shape.bodies[body_id]
+            body_center = np.mean(body.control_pts, axis=0)
+            current_body_deformation = np.zeros((len(pts), 3))
 
-            deformation[i,0] = x
-            deformation[i,1] = y
-            deformation[i,2] = edg
+            for local_id, pt in enumerate(pts):
+                radius = max(abs(deformation[action_index,0]),0.2)*self.max_deformation
+                dangle = (360.0/float(body.n_control_pts))
+                angle  = dangle*float(pt)+deformation[action_index,1]*dangle/2.0
+                x      = body_center[0] + radius*math.cos(math.radians(angle))
+                y      = body_center[1] + radius*math.sin(math.radians(angle))
+                edg    = 0.5+0.5*abs(deformation[action_index,2])
 
-        # Modify shape
-        env.shape.modify_shape_from_field(deformation,
+                current_body_deformation[local_id,0] = x
+                current_body_deformation[local_id,1] = y
+                current_body_deformation[local_id,2] = edg
+                action_index += 1
+
+            body_deformation.append(current_body_deformation)
+
+        # Modify shape system
+        env.shape.modify_shape_from_field(body_deformation,
                                           replace=self.replace_shape,
                                           pts_list=self.pts_to_move)
-        if (    self.replace_shape):           centering = True
-        if (not self.replace_shape):           centering = False
         env.shape.generate(centering=False)
         env.shape.write_csv()
 
@@ -177,8 +188,6 @@ class env():
             # Do not solve if mesh is too large
             if (n_tri > self.cell_limit):
                 meshed = False
-                os.system('cp '+env.shape.name+'_'+str(env.shape.index)+'.png '
-                          +self.comp_dir+'/save/rejected/.')
         except Exception as exc:
             print(exc)
             meshed = False
@@ -191,16 +200,19 @@ class env():
                                  ymin        = self.ymin,
                                  ymax        = self.ymax)
 
+        png_name = env.shape.name+'_'+str(env.shape.index)+'.png'
+        if (not meshed):
+            shutil.copy(png_name, self.comp_dir+'/save/rejected/.')
+
         # Save png and csv files
-        os.system('mv '+env.shape.name+'_'+str(env.shape.index)+'.png '
-                  +self.comp_dir+'/save/png/.')
-        os.system('mv '+env.shape.name+'_'+str(env.shape.index)+'.csv '
-                  +self.comp_dir+'/save/csv/.')
+        shutil.move(png_name, self.comp_dir+'/save/png/.')
+        for filename in glob.glob(env.shape.name+'_'+str(env.shape.index)+'_body*.csv'):
+            shutil.move(filename, self.comp_dir+'/save/csv/.')
 
         # Copy new shape files to save folder
+        xml_name = env.shape.name+'_'+str(env.shape.index)+'.xml'
         if (meshed):
-            os.system('cp '+env.shape.name+'_'+str(env.shape.index)+'.xml '
-                      +self.comp_dir+'/save/xml/.')
+            shutil.copy(xml_name, self.comp_dir+'/save/xml/.')
 
         # Update control number
         env.control_nb += 1
@@ -216,12 +228,13 @@ class env():
 
         # Copy u, v and p solutions to repo
         if (meshed):
-            os.system('mv '+str(env.shape.index)+'_u.png '+self.comp_dir+'/save/sol/.')
-            os.system('mv '+str(env.shape.index)+'_v.png '+self.comp_dir+'/save/sol/.')
-            os.system('mv '+str(env.shape.index)+'_p.png '+self.comp_dir+'/save/sol/.')        
+            shutil.move(str(env.shape.index)+'_u.png', self.comp_dir+'/save/sol/.')
+            shutil.move(str(env.shape.index)+'_v.png', self.comp_dir+'/save/sol/.')
+            shutil.move(str(env.shape.index)+'_p.png', self.comp_dir+'/save/sol/.')
+
         # Remove mesh file from repo
         if (meshed):
-            os.system('rm '+env.shape.name+'_'+str(env.shape.index)+'.xml')
+            os.remove(xml_name)
 
         # Return
         terminal = False
@@ -234,19 +247,21 @@ class env():
             try:
                 # Compute drag and lift
                 name = self.comp_dir+'/'+env.shape.name+'_'+str(env.shape.index)+'.xml'
-                drag, lift, solved = solve_flow(mesh_file  = name,
-                                                final_time = self.final_time,
-                                                reynolds   = self.reynolds,
-                                                output     = self.output,
-                                                cfl        = self.cfl,
-                                                pts_x      = env.shape.control_pts[:,0],
-                                                pts_y      = env.shape.control_pts[:,1],
-                                                xmin       = self.xmin,
-                                                xmax       = self.xmax,
-                                                ymin       = self.ymin,
-                                                ymax       = self.ymax)
+                pts  = env.shape.get_control_pts()
+                drag, lift, solved = solve_flow(mesh_file      = name,
+                                                final_time     = self.final_time,
+                                                reynolds       = self.reynolds,
+                                                output         = self.output,
+                                                cfl            = self.cfl,
+                                                pts_x          = pts[:,0],
+                                                pts_y          = pts[:,1],
+                                                obstacle_boxes = env.shape.get_obstacle_boxes(),
+                                                xmin           = self.xmin,
+                                                xmax           = self.xmax,
+                                                ymin           = self.ymin,
+                                                ymax           = self.ymax)
                 # Save solution png
-                os.system('mv '+str(env.shape.index)+'.png '+self.comp_dir+'/save/sol/.')
+                shutil.move(str(env.shape.index)+'.png', self.comp_dir+'/save/sol/.')
             except Exception as exc:
                 print(exc)
                 solved = False
@@ -280,9 +295,10 @@ class env():
         self.reward = np.append(self.reward, reward)
         self.penal  = np.append(self.penal,  penal)
 
-        val_drag   = np.sum(self.drag)/env.shape.index
-        val_lift   = np.sum(self.lift)/env.shape.index
-        val_reward = np.sum(self.reward)/env.shape.index
+        denom      = max(env.shape.index, 1)
+        val_drag   = np.sum(self.drag)/denom
+        val_lift   = np.sum(self.lift)/denom
+        val_reward = np.sum(self.reward)/denom
         self.avg_drag   = np.append(self.avg_drag,   val_drag)
         self.avg_lift   = np.append(self.avg_lift,   val_lift)
         self.avg_reward = np.append(self.avg_reward, val_reward)
@@ -309,19 +325,13 @@ class env():
                                            self.avg_reward[-1]))
 
     def fill_next_state(self, meshed, index):
-        next_state = np.array([])
-        for i in range(0,env.shape.n_control_pts):
-            next_state = np.append(next_state,env.shape.control_pts[i,0])
-            next_state = np.append(next_state,env.shape.control_pts[i,1])
-            next_state = np.append(next_state,env.shape.edgy[i])
-
-        return next_state
+        return env.shape.get_state()
 
     @property
     def states(self):
         return dict(
             type='float',
-            shape=(3*env.shape.n_control_pts))
+            shape=(len(env.shape.get_state())))
 
     @property
     def actions(self):

@@ -23,6 +23,7 @@ def solve_flow(*args, **kwargs):
     reynolds    = kwargs.get('reynolds',    10.0)
     pts_x       = kwargs.get('pts_x',       np.array([]))
     pts_y       = kwargs.get('pts_y',       np.array([]))
+    obstacle_boxes = kwargs.get('obstacle_boxes', None)
     cfl         = kwargs.get('cfl',         0.5)
     xmin        = kwargs.get('xmin',       -15.0)
     xmax        = kwargs.get('xmax',        30.0)
@@ -34,16 +35,21 @@ def solve_flow(*args, **kwargs):
     mu        = 1.0/reynolds
     rho       = 1.0
     tag_shape = 5
-    x_shape   = 4.0
-    y_shape   = 4.0
     sol_file  = 'shape.pvd'
 
-    # Create subdomain containing shape boundary
+    if (obstacle_boxes is None):
+        obstacle_boxes = [dict(xmin=-4.0, xmax=4.0, ymin=-4.0, ymax=4.0)]
+
+    # Create subdomain containing all obstacle boundaries
     class Obstacle(SubDomain):
         def inside(self, x, on_boundary):
-            return (on_boundary and
-                    (-x_shape < x[0] < x_shape) and
-                    (-y_shape < x[1] < y_shape))
+            if (not on_boundary):
+                return False
+            for box in obstacle_boxes:
+                if ((box['xmin'] < x[0] < box['xmax']) and
+                    (box['ymin'] < x[1] < box['ymax'])):
+                    return True
+            return False
 
     # Define symmetric gradient
     def epsilon(u):
@@ -90,7 +96,10 @@ def solve_flow(*args, **kwargs):
     outflow = 'near(x[0], '+str(math.floor(xmax))+')'
     wall1   = 'near(x[1], '+str(math.floor(ymin))+')'
     wall2   = 'near(x[1], '+str(math.floor(ymax))+')'
-    shape   = 'on_boundary && x[0]>(-'+str(x_shape)+') && x[0]<'+str(x_shape)+' && x[1]>(-'+str(y_shape)+') && x[1]<('+str(y_shape)+')'
+    shape_terms = []
+    for box in obstacle_boxes:
+        shape_terms.append('(x[0]>'+str(box['xmin'])+' && x[0]<'+str(box['xmax'])+' && x[1]>'+str(box['ymin'])+' && x[1]<'+str(box['ymax'])+')')
+    shape   = 'on_boundary && ('+' || '.join(shape_terms)+')'
 
     # Define boundary conditions
     bcu_inflow  = DirichletBC(V,        Constant((v_in, 0.0)), inflow)

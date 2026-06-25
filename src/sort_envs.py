@@ -54,7 +54,7 @@ while looping:
     # Loop over envs
     for env in envs:
         img    = env+'/save/png/shape_'+str(glb_index)+'.png'
-        csv    = env+'/save/csv/shape_'+str(glb_index)+'.csv'
+        csv_files = glob.glob(env+'/save/csv/shape_'+str(glb_index)+'_body*.csv')
         sol    = env+'/save/sol/'+str(glb_index)+'.png'
         sol_u  = env+'/save/sol/'+str(glb_index)+'_u.png'
         sol_v  = env+'/save/sol/'+str(glb_index)+'_v.png'
@@ -63,8 +63,9 @@ while looping:
         # If files exists, copy
         if os.path.isfile(img):
             shutil.copy(img,   png_path+'/'+str(loc_index)+'.png')
-        if os.path.isfile(csv):
-            shutil.copy(csv,   csv_path+'/'+str(loc_index)+'.csv')
+        for csv in csv_files:
+            body_suffix = csv.split('_body')[-1]
+            shutil.copy(csv, csv_path+'/'+str(loc_index)+'_body'+body_suffix)
         if os.path.isfile(sol_u):
             shutil.copy(sol_u, sol_path+'/'+str(loc_index)+'_u.png')
         if os.path.isfile(sol_v):
