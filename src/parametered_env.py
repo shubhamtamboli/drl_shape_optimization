@@ -23,7 +23,7 @@ def resume_env():
     reset_dir               = 'reset/4'
     nb_pts_to_move          = 4
     pts_to_move             = [0,1,2,3]
-    nb_ctrls_per_episode    = 0
+    nb_ctrls_per_episode    = 50
     nb_episodes             = 50000
     max_deformation         = 3.0
     restart_from_cylinder   = True
