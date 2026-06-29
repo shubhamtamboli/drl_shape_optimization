@@ -226,11 +226,12 @@ class env():
         # Fill next state
         next_state = self.fill_next_state(meshed, env.shape.index)
 
-        # Copy u, v and p solutions to repo
-        if (meshed):
-            shutil.move(str(env.shape.index)+'_u.png', self.comp_dir+'/save/sol/.')
-            shutil.move(str(env.shape.index)+'_v.png', self.comp_dir+'/save/sol/.')
-            shutil.move(str(env.shape.index)+'_p.png', self.comp_dir+'/save/sol/.')
+        # Copy u, v and p solutions to repo if the solver produced them
+        if (meshed and self.last_solved):
+            for suffix in ['_u.png', '_v.png', '_p.png']:
+                filename = str(env.shape.index)+suffix
+                if os.path.exists(filename):
+                    shutil.move(filename, self.comp_dir+'/save/sol/.')
 
         # Remove mesh file from repo
         if (meshed):
@@ -242,6 +243,8 @@ class env():
         return(next_state, terminal, self.reward[-1])
 
     def compute_reward(self, meshed):
+        self.last_solved = False
+
         # If meshing was successful, reward is computed normally
         if (meshed):
             try:
@@ -260,14 +263,18 @@ class env():
                                                 xmax           = self.xmax,
                                                 ymin           = self.ymin,
                                                 ymax           = self.ymax)
-                # Save solution png
-                shutil.move(str(env.shape.index)+'.png', self.comp_dir+'/save/sol/.')
+                # Save solution png if the solver produced the summary image
+                summary_png = str(env.shape.index)+'.png'
+                if os.path.exists(summary_png):
+                    shutil.move(summary_png, self.comp_dir+'/save/sol/.')
             except Exception as exc:
                 print(exc)
                 solved = False
 
             # If solver was successful
             if (solved):
+                self.last_solved = True
+
                 # Drag is always <0 while lift changes sign
                 penal  = 0.0
                 lift   =-lift # Make lift positive
