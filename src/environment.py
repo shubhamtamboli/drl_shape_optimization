@@ -72,6 +72,7 @@ class env():
         env.shape = ShapeSystem()
         env.shape.read_csv(self.reset_dir)
         env.shape.generate(centering=False)
+        self.update_body_centers()
 
         # Initialize arrays
         self.drag       = np.array([])
@@ -112,6 +113,11 @@ class env():
                 for filename in glob.glob(self.reset_dir+'/*.csv'):
                     shutil.copy(filename, save_dir+'/csv/.')
 
+    def update_body_centers(self):
+        self.body_centers = []
+        for body in env.shape.bodies:
+            self.body_centers.append(np.mean(body.control_pts, axis=0))
+
     def normalize_pts_to_move(self, pts_to_move):
         if (len(pts_to_move) == 0):
             return []
@@ -132,6 +138,7 @@ class env():
         if (self.restart_from_cylinder):
             env.shape.read_csv(self.reset_dir, keep_numbering=True)
             env.shape.generate(centering=False)
+            self.update_body_centers()
 
         # Fill next state
         next_state = self.fill_next_state(True, 0)
@@ -150,7 +157,7 @@ class env():
 
         for body_id, pts in enumerate(self.pts_to_move):
             body = env.shape.bodies[body_id]
-            body_center = np.mean(body.control_pts, axis=0)
+            body_center = self.body_centers[body_id]
             current_body_deformation = np.zeros((len(pts), 3))
 
             for local_id, pt in enumerate(pts):

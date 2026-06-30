@@ -52,7 +52,7 @@ def resume_env():
     # Environment parameters
     reset_dir               = 'reset/tandem_2cyl'
     geometry_mode           = 'tandem'
-    baseline_geometry       = 'cylinder'  # Use 'from_csv' to preserve body0.csv/body1.csv
+    baseline_geometry       = 'from_csv'  # Use 'from_csv' to preserve body0.csv/body1.csv
     nb_bodies               = 2
     nb_pts_to_move_per_body = 4
     pts_to_move_per_body    = [[0, 1, 2, 3],
@@ -69,7 +69,7 @@ def resume_env():
 
     nb_pts_to_move          = nb_bodies * nb_pts_to_move_per_body
     pts_to_move             = pts_to_move_per_body
-    nb_ctrls_per_episode    = 50
+    nb_ctrls_per_episode    = 30
     nb_episodes             = 10000
     max_deformation         = 3.0
     restart_from_cylinder   = True
